@@ -19,6 +19,7 @@ func main() {
 	fs.AddFilter("variable_fsclient true")
 
 	fs.SubcribeEvent("HEARTBEAT")
+	fs.SubcribeEvent("Event-Name CHANNEL_PARK")
 	fs.SubcribeEvent("Event-Name CHANNEL_CREATE")
 	fs.SubcribeEvent("Event-Name CHANNEL_ANSWER")
 	fs.SubcribeEvent("Event-Name CHANNEL_HANGUP_COMPLETE")
@@ -37,5 +38,10 @@ func main() {
 		}
 
 		fmt.Print("Action: '", event["Event-Name"], "' ID: '", event["Unique-ID"], "'\n")
+
+		if event["Event-Name"] == "CHANNEL_PARK" {
+			fs.Execute("answer", "", event["Unique-ID"], true)
+			fs.Execute("delay_echo", "", event["Unique-ID"], true)
+		}
 	}
 }
