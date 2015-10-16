@@ -2,13 +2,13 @@ package fsclient
 
 import (
 	"errors"
+	"io"
 	"net"
 	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
-	"io"
 )
 
 type Client struct {
@@ -76,23 +76,23 @@ func (client *Client) Api(cmd string) (string, error) {
 
 	resp, err := client.eventConn.ReadMIMEHeader()
 	if err != nil {
-		return "",err
+		return "", err
 	}
 
 	if resp.Get("Content-Type") == "api/response" && resp.Get("Content-Length") != "" {
 		length, err := strconv.Atoi(resp.Get("Content-Length"))
 		if err != nil {
-			return "",err
+			return "", err
 		}
 
 		buf := make([]byte, length)
 		if _, err = io.ReadFull(client.eventConn.R, buf); err != nil {
-			return "",err
+			return "", err
 		}
 		return string(buf), nil
 	}
 
-	return "",errors.New("Could not run command")
+	return "", errors.New("Could not run command")
 }
 
 func (client *Client) Execute(app string, arg string, uuid string, lock bool) (err error) {
@@ -162,4 +162,3 @@ func (client *Client) ReadEvent() (map[string]string, error) {
 
 	return nil, errors.New("Unexpected read error")
 }
-

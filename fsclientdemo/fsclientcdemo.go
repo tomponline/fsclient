@@ -16,6 +16,8 @@ func main() {
 	}
 
 	fs.AddFilter("Event-Name HEARTBEAT")
+	fs.AddFilter("variable_fsclient true")
+
 	fs.SubcribeEvent("HEARTBEAT")
 	fs.SubcribeEvent("Event-Name CHANNEL_CREATE")
 	fs.SubcribeEvent("Event-Name CHANNEL_ANSWER")
