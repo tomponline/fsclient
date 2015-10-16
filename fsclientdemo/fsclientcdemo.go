@@ -26,7 +26,7 @@ func main() {
 	fs.SubcribeEvent("Event-Name CHANNEL_PROGRESS")
 	fs.SubcribeEvent("Event-Name CHANNEL_EXECUTE")
 
-	hostname, err := fs.Api("hostname")
+	hostname, err := fs.API("hostname")
 	fmt.Println(hostname)
 
 	for {

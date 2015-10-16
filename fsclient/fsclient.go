@@ -1,3 +1,4 @@
+//Package fsclient provides a client for the Freeswitch Event Socket.
 package fsclient
 
 import (
@@ -11,10 +12,12 @@ import (
 	"time"
 )
 
+//Client represents a Freeswitch client. Contains the event socket connection.
 type Client struct {
 	eventConn *textproto.Conn
 }
 
+//Connect establishes a connection with the local Freeswitch server.
 func (client *Client) Connect() (err error) {
 	conn, err := net.DialTimeout("tcp", "127.0.0.1:8021", time.Duration(5*time.Second))
 	if err != nil {
@@ -41,6 +44,10 @@ func (client *Client) Connect() (err error) {
 	return errors.New("Could not authenticate")
 }
 
+//AddFilter specifies event types to listen for.
+//Note, this is not a filter out but rather a "filter in," that is, when a
+//filter is applied only the filtered values are received.
+//Multiple filters on a socket connection are allowed.
 func (client *Client) AddFilter(arg string) (err error) {
 	client.eventConn.PrintfLine("filter %s\r\n", arg)
 
@@ -56,6 +63,7 @@ func (client *Client) AddFilter(arg string) (err error) {
 	return errors.New("Could not add filter")
 }
 
+//SubcribeEvent enables events by class or all.
 func (client *Client) SubcribeEvent(arg string) (err error) {
 	client.eventConn.PrintfLine("event plain %s\r\n", arg)
 
@@ -71,7 +79,8 @@ func (client *Client) SubcribeEvent(arg string) (err error) {
 	return errors.New("Could not subcribe to event")
 }
 
-func (client *Client) Api(cmd string) (string, error) {
+//API sends an api command (blocking mode).
+func (client *Client) API(cmd string) (string, error) {
 	client.eventConn.PrintfLine("api %s\r\n", cmd)
 
 	resp, err := client.eventConn.ReadMIMEHeader()
@@ -95,6 +104,7 @@ func (client *Client) Api(cmd string) (string, error) {
 	return "", errors.New("Could not run command")
 }
 
+//Execute is used to execute dialplan applications on a channel.
 func (client *Client) Execute(app string, arg string, uuid string, lock bool) (err error) {
 	client.eventConn.PrintfLine("sendmsg %s", uuid)
 	client.eventConn.PrintfLine("call-command: execute")
@@ -122,6 +132,7 @@ func (client *Client) Execute(app string, arg string, uuid string, lock bool) (e
 	return errors.New("Execute failure")
 }
 
+//ReadEvent receives a single event from the Freeswitch socket (blocking mode).
 func (client *Client) ReadEvent() (map[string]string, error) {
 	resp, err := client.eventConn.ReadMIMEHeader()
 	if err != nil {
