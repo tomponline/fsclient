@@ -3,7 +3,6 @@ package fsclient
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/textproto"
