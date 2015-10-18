@@ -7,7 +7,7 @@ import (
 
 func main() {
 	fmt.Println("Starting...")
-	fs := fsclient.Client{}
+	fs := fsclient.NewClient()
 
 	err := fs.Connect()
 	if err != nil {
@@ -30,16 +30,21 @@ func main() {
 	fmt.Println(hostname)
 
 	for {
-		event, err := fs.ReadEvent()
+		event, err := fs.ReadEvent(false)
 
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("Got and error: ", err)
 			return
 		}
 
-		fmt.Print("Action: '", event["Event-Name"], "' ID: '", event["Unique-ID"], "'\n")
+		fmt.Print("Action: '", event["Event-Name"], "'\n")
+
+		fmt.Println("Getting hostname...")
+		hostname, err := fs.API("hostname")
+		fmt.Println("API response: ", hostname)
 
 		if event["Event-Name"] == "CHANNEL_PARK" {
+			fmt.Println("Got channel park")
 			fs.Execute("answer", "", event["Unique-ID"], true)
 			fs.Execute("delay_echo", "", event["Unique-ID"], true)
 		}
