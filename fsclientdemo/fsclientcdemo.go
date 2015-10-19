@@ -7,7 +7,7 @@ import (
 
 func main() {
 	fmt.Println("Starting...")
-	fs := fsclient.NewClient()
+	fs := fsclient.NewClient("127.0.0.1:8021", "ClueCon")
 
 	err := fs.Connect()
 	if err != nil {

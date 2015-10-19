@@ -16,20 +16,23 @@ import (
 type Client struct {
 	eventConn  *textproto.Conn
 	eventQueue []map[string]string
+	addr       string
+	password   string
 }
 
 //NewClient initialises a new Freeswitch client.
-func NewClient() *Client {
+func NewClient(addr string, password string) *Client {
 	return &Client{
 		eventQueue: make([]map[string]string, 0),
+		addr:       addr,
+		password:   password,
 	}
 }
 
 //Connect establishes a connection with the local Freeswitch server.
 func (client *Client) Connect() (err error) {
 	//Connect to Freeswitch Event Socket.
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:8021",
-		time.Duration(5*time.Second))
+	conn, err := net.DialTimeout("tcp", client.addr, time.Duration(5*time.Second))
 	if err != nil {
 		return
 	}
@@ -44,7 +47,7 @@ func (client *Client) Connect() (err error) {
 	}
 
 	//Send authentication request to server.
-	client.eventConn.PrintfLine("auth %s\r\n", "ClueCon")
+	client.eventConn.PrintfLine("auth %s\r\n", client.password)
 
 	if resp, err = client.eventConn.ReadMIMEHeader(); err != nil {
 		return
