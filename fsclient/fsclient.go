@@ -104,7 +104,7 @@ func (client *Client) SubcribeEvent(arg string) (err error) {
 func (client *Client) API(cmd string) (string, error) {
 	//Send API command to the server.
 	client.eventConn.PrintfLine("api %s\r\n", cmd)
-	event, err := client.ReadEvent(true)
+	event, err := client.readMsg(true)
 	return event["body"], err
 }
 
@@ -124,12 +124,17 @@ func (client *Client) Execute(app string, arg string, uuid string, lock bool) (e
 	}
 
 	client.eventConn.PrintfLine("") //Empty line indicates end of command.
-	_, err = client.ReadEvent(true)
+	_, err = client.readMsg(true)
 	return err
 }
 
 //ReadEvent receives a single event from the Freeswitch socket (blocking mode).
-func (client *Client) ReadEvent(cmdResponse bool) (map[string]string, error) {
+func (client *Client) ReadEvent() (map[string]string, error) {
+	return client.readMsg(false)
+}
+
+//ReadEvent receives a single message from the Freeswitch socket (blocking mode).
+func (client *Client) readMsg(cmdResponse bool) (map[string]string, error) {
 	//If unprocessed events in local queue, return them first.
 	if !cmdResponse && len(client.eventQueue) > 0 {
 		popped := client.eventQueue[0]

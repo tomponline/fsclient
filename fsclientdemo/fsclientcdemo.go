@@ -30,7 +30,7 @@ func main() {
 	fmt.Println(hostname)
 
 	for {
-		event, err := fs.ReadEvent(false)
+		event, err := fs.ReadEvent()
 
 		if err != nil {
 			fmt.Println("Got and error: ", err)
