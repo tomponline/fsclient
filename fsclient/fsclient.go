@@ -222,7 +222,10 @@ ConnectLoop:
 					continue ConnectLoop
 				}
 			} else if resp.Get("Content-Type") == "command/reply" {
-				client.cmdResCh <- cmdRes{body: resp.Get("Reply-Text"), err: err}
+				client.cmdResCh <- cmdRes{
+					body: resp.Get("Reply-Text"),
+					err: err
+				}
 				continue MsgLoop
 			} else {
 				log.Print("Unexpected message: ", resp.Get("Content-Type"))
