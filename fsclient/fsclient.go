@@ -224,7 +224,7 @@ ConnectLoop:
 			} else if resp.Get("Content-Type") == "command/reply" {
 				client.cmdResCh <- cmdRes{
 					body: resp.Get("Reply-Text"),
-					err: err
+					err:  err,
 				}
 				continue MsgLoop
 			} else {
