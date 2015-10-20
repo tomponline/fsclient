@@ -5,43 +5,42 @@ import (
 	"github.com/tomponline/fsclient/fsclient"
 )
 
+var fs *fsclient.Client
+
 func main() {
 	fmt.Println("Starting...")
-	fs := fsclient.NewClient("127.0.0.1:8021", "ClueCon")
 
-	err := fs.Connect()
-	if err != nil {
-		fmt.Println(err)
-		return
+	filters := []string{
+		"Event-Name HEARTBEAT",
+		"variable_fsclient true",
 	}
 
-	fs.AddFilter("Event-Name HEARTBEAT")
-	fs.AddFilter("variable_fsclient true")
+	subs := []string{
+		"Event-Name HEARTBEAT",
+		"Event-Name CHANNEL_PARK",
+		"Event-Name CHANNEL_CREATE",
+		"Event-Name CHANNEL_ANSWER",
+		"Event-Name CHANNEL_HANGUP_COMPLETE",
+		"Event-Name CHANNEL_PROGRESS",
+		"Event-Name CHANNEL_EXECUTE",
+	}
 
-	fs.SubcribeEvent("HEARTBEAT")
-	fs.SubcribeEvent("Event-Name CHANNEL_PARK")
-	fs.SubcribeEvent("Event-Name CHANNEL_CREATE")
-	fs.SubcribeEvent("Event-Name CHANNEL_ANSWER")
-	fs.SubcribeEvent("Event-Name CHANNEL_HANGUP_COMPLETE")
-	fs.SubcribeEvent("Event-Name CHANNEL_PROGRESS")
-	fs.SubcribeEvent("Event-Name CHANNEL_EXECUTE")
+	fs = fsclient.NewClient("127.0.0.1:8021", "ClueCon", filters, subs)
+	fsEventHandler()
+}
 
-	hostname, err := fs.API("hostname")
-	fmt.Println(hostname)
+func apiHostname() {
+	fmt.Println("Getting hostname...")
+	hostname, _ := fs.API("hostname")
+	fmt.Println("API response: ", hostname)
+}
 
+func fsEventHandler() {
 	for {
-		event, err := fs.ReadEvent()
-
-		if err != nil {
-			fmt.Println("Got and error: ", err)
-			return
-		}
-
+		event := <-fs.EventCh
 		fmt.Print("Action: '", event["Event-Name"], "'\n")
 
-		fmt.Println("Getting hostname...")
-		hostname, err := fs.API("hostname")
-		fmt.Println("API response: ", hostname)
+		go apiHostname()
 
 		if event["Event-Name"] == "CHANNEL_PARK" {
 			fmt.Println("Got channel park")
