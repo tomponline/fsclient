@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/tomponline/fsclient/fsclient"
+	"time"
 )
 
 var fs *fsclient.Client
@@ -26,6 +27,7 @@ func main() {
 	}
 
 	fs = fsclient.NewClient("127.0.0.1:8021", "ClueCon", filters, subs)
+	go apiHostnameLoop()
 	fsEventHandler()
 }
 
@@ -33,6 +35,15 @@ func apiHostname() {
 	fmt.Println("Getting hostname...")
 	hostname, _ := fs.API("hostname")
 	fmt.Println("API response: ", hostname)
+}
+
+func apiHostnameLoop() {
+	for {
+		fmt.Println("Getting hostname...")
+		hostname, err := fs.API("hostname")
+		fmt.Println("API response: ", hostname, err)
+		time.Sleep(1 * time.Second)
+	}
 }
 
 func fsEventHandler() {

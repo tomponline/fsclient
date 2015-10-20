@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,18 +20,11 @@ type Client struct {
 	addr      string
 	password  string
 	cmdResCh  chan cmdRes
-	cmdReqCh  chan cmdReq
 	EventCh   chan map[string]string
 	filters   []string
 	subs      []string
-}
-
-type cmdReq struct {
-	cmdType string
-	cmd     string
-	arg     string
-	uuid    string
-	resCh   chan cmdRes
+	connMu    *sync.Mutex
+	conn      net.Conn
 }
 
 type cmdRes struct {
@@ -44,14 +38,14 @@ func NewClient(addr string, password string, filters []string, subs []string) *C
 		addr:     addr,
 		password: password,
 		cmdResCh: make(chan cmdRes),
-		cmdReqCh: make(chan cmdReq),
 		EventCh:  make(chan map[string]string, 100),
 		filters:  filters,
 		subs:     subs,
+		connMu:   &sync.Mutex{},
 	}
 
 	go fs.ReadHandler()
-	go fs.CmdHandler()
+	//go fs.CmdHandler()
 	return fs
 }
 
@@ -62,9 +56,15 @@ func (client *Client) connect() (err error) {
 	if err != nil {
 		return
 	}
+	client.conn = conn
 
 	//Convert the raw TCP connection to a textproto connection.
-	client.eventConn = textproto.NewConn(conn)
+	client.connMu.Lock()
+	if client.eventConn != nil {
+		client.eventConn.Close()
+	}
+	client.eventConn = textproto.NewConn(client.conn)
+	client.connMu.Unlock()
 
 	//Read the welcome message.
 	resp, err := client.eventConn.ReadMIMEHeader()
@@ -143,38 +143,25 @@ func (client *Client) subcribeEvent(arg string) (err error) {
 
 //API sends an api command (blocking mode).
 func (client *Client) API(cmd string) (string, error) {
-	resCh := make(chan cmdRes)
-	client.cmdReqCh <- cmdReq{
-		cmdType: "api",
-		cmd:     cmd,
-		resCh:   resCh,
+	client.connMu.Lock()
+	defer client.connMu.Unlock()
+	if client.eventConn == nil {
+		return "", errors.New("Not connected")
 	}
-	res := <-resCh
+	err := client.eventConn.PrintfLine("api %s\r\n", cmd)
+	log.Print("API res: ", err)
+	res := <-client.cmdResCh
 	return res.body, res.err
-}
-
-//sendAPI sends an api command (blocking mode).
-func (client *Client) sendAPI(cmd string) {
-	//Send API command to the server.
-	client.eventConn.PrintfLine("api %s\r\n", cmd)
 }
 
 //Execute is used to execute dialplan applications on a channel.
 func (client *Client) Execute(app string, arg string, uuid string, lock bool) (string, error) {
-	resCh := make(chan cmdRes)
-	client.cmdReqCh <- cmdReq{
-		cmdType: "execute",
-		cmd:     app,
-		arg:     arg,
-		uuid:    uuid,
-		resCh:   resCh,
+	client.connMu.Lock()
+	defer client.connMu.Unlock()
+	if client.eventConn == nil {
+		return "", errors.New("Not connected")
 	}
-	res := <-resCh
-	return res.body, res.err
-}
 
-//sendExecute is used to execute dialplan applications on a channel.
-func (client *Client) sendExecute(app string, arg string, uuid string, lock bool) {
 	//Send execute command to server.
 	client.eventConn.PrintfLine("sendmsg %s", uuid)
 	client.eventConn.PrintfLine("call-command: execute")
@@ -189,6 +176,8 @@ func (client *Client) sendExecute(app string, arg string, uuid string, lock bool
 	}
 
 	client.eventConn.PrintfLine("") //Empty line indicates end of command.
+	res := <-client.cmdResCh
+	return res.body, res.err
 }
 
 //ReadHandler receives a single message from the Freeswitch socket (blocking mode).
@@ -196,6 +185,14 @@ func (client *Client) ReadHandler() {
 ConnectLoop:
 	for {
 		log.Print("fsclient: Connecting...")
+		//Cleanly end any waiting commands
+		select {
+		case client.cmdResCh <- cmdRes{
+			err: errors.New("Disconnected"),
+		}:
+		default:
+		}
+
 		err := client.connect()
 		if err != nil {
 			log.Print("fsclient: Failed to connect: ", err)
@@ -274,29 +271,15 @@ func (client *Client) handleAPIMsg(resp textproto.MIMEHeader) error {
 	length, err := strconv.Atoi(resp.Get("Content-Length"))
 	if err != nil {
 		log.Print("fsclient: Invalid  Content-Length", err)
+		client.cmdResCh <- cmdRes{body: "", err: err}
 		return err
 	}
 
 	//Read Content-Length bytes into a buffer and convert to string.
 	buf := make([]byte, length)
 	if _, err = io.ReadFull(client.eventConn.R, buf); err != nil {
-		log.Print("fsclient: Read failure: ", err)
-		return err
+		log.Print("fsclient: API Read failure: ", err)
 	}
 	client.cmdResCh <- cmdRes{body: string(buf), err: err}
 	return err
-}
-
-//CmdHandler receives a command requests and writes them to Freeswitch socket.
-func (client *Client) CmdHandler() {
-	for {
-		cmdReq := <-client.cmdReqCh
-		if cmdReq.cmdType == "execute" {
-			client.sendExecute(cmdReq.cmd, cmdReq.arg, cmdReq.uuid, true)
-		} else if cmdReq.cmdType == "api" {
-			client.sendAPI(cmdReq.cmd)
-		}
-		res := <-client.cmdResCh
-		cmdReq.resCh <- res
-	}
 }
