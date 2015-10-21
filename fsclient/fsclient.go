@@ -150,6 +150,7 @@ func (client *Client) API(cmd string) (string, error) {
 		return "", errDisconnected
 	}
 	client.eventConn.PrintfLine("api %s\r\n", cmd)
+	log.Print(logPrefix, "Waiting for response...")
 	res := <-client.cmdResCh
 	return res.body, res.err
 }
@@ -236,9 +237,9 @@ ConnectLoop:
 func (client *Client) sendCmdRes(res cmdRes, logDiscards bool) {
 	select {
 	case client.cmdResCh <- res:
-	default:
+	case <-time.After(time.Millisecond):
 		if logDiscards {
-			log.Print(logPrefix, "Error discarded cmd result: ", res)
+			log.Print(logPrefix, "Error discarded API result: ", res.body)
 		}
 	}
 }
@@ -247,8 +248,8 @@ func (client *Client) sendCmdRes(res cmdRes, logDiscards bool) {
 func (client *Client) sendEvent(event map[string]string) {
 	select {
 	case client.EventCh <- event:
-	default:
-		log.Print(logPrefix, "Error discarded event: ",
+	case <-time.After(time.Millisecond):
+		log.Print(logPrefix, "Error discarded Event: ",
 			event["Unique-ID"], " ", event["Event-Name"])
 	}
 }
