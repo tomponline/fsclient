@@ -26,9 +26,13 @@ func main() {
 		"Event-Name CHANNEL_EXECUTE",
 	}
 
-	fs = fsclient.NewClient("127.0.0.1:8021", "ClueCon", filters, subs)
+	fs = fsclient.NewClient("127.0.0.1:8021", "ClueCon", filters, subs, initFunc)
 	go apiHostnameLoop()
 	fsEventHandler()
+}
+
+func initFunc() {
+	fmt.Println("fsclient is now initialised")
 }
 
 func apiHostname() {

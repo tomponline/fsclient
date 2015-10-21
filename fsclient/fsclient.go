@@ -14,6 +14,9 @@ import (
 	"time"
 )
 
+var errDisconnected = errors.New("Disconnected")
+var logPrefix = "fsclient: "
+
 //Client represents a Freeswitch client. Contains the event socket connection.
 type Client struct {
 	eventConn *textproto.Conn
@@ -24,16 +27,17 @@ type Client struct {
 	filters   []string
 	subs      []string
 	connMu    *sync.Mutex
-	conn      net.Conn
+	initFunc func(*Client)
 }
 
+//cmdRes is a response structure for Freeswitch commands.
 type cmdRes struct {
 	body string
 	err  error
 }
 
-//NewClient initialises a new Freeswitch client.
-func NewClient(addr string, password string, filters []string, subs []string) *Client {
+//NewClient creates a new Freeswitch client with filters, subscriptions and an init function.
+func NewClient(addr string, password string, filters []string, subs []string, initFunc func(*Client)) *Client {
 	fs := &Client{
 		addr:     addr,
 		password: password,
@@ -42,10 +46,10 @@ func NewClient(addr string, password string, filters []string, subs []string) *C
 		filters:  filters,
 		subs:     subs,
 		connMu:   &sync.Mutex{},
+		initFunc: initFunc,
 	}
 
-	go fs.ReadHandler()
-	//go fs.CmdHandler()
+	go fs.readHandler()
 	return fs
 }
 
@@ -56,14 +60,12 @@ func (client *Client) connect() (err error) {
 	if err != nil {
 		return
 	}
-	client.conn = conn
-
 	//Convert the raw TCP connection to a textproto connection.
 	client.connMu.Lock()
 	if client.eventConn != nil {
 		client.eventConn.Close()
 	}
-	client.eventConn = textproto.NewConn(client.conn)
+	client.eventConn = textproto.NewConn(conn)
 	client.connMu.Unlock()
 
 	//Read the welcome message.
@@ -74,30 +76,34 @@ func (client *Client) connect() (err error) {
 
 	//Send authentication request to server.
 	client.eventConn.PrintfLine("auth %s\r\n", client.password)
-
 	if resp, err = client.eventConn.ReadMIMEHeader(); err != nil {
 		return
 	}
 
 	//Check the command was processed OK.
-	if resp.Get("Content-Type") == "command/reply" &&
-		resp.Get("Reply-Text") == "+OK accepted" {
-		for _, filter := range client.filters {
-			if err = client.addFilter(filter); err != nil {
-				return
-			}
-		}
-
-		for _, sub := range client.subs {
-			if err = client.subcribeEvent(sub); err != nil {
-				return
-			}
-		}
-
-		return
+	if resp.Get("Reply-Text") == "+OK accepted" {
+			return
 	}
 
-	return errors.New("Could not authenticate")
+	return errors.New("Authentication failed: " + resp.Get("Reply-Text"))
+}
+
+
+//setupFilters configures which events to receive from Freeswitch.
+func (client *Client) setupFilters() {
+	log.Print(logPrefix, "Setting up filters...")
+	for _, filter := range client.filters {
+		if err := client.addFilter(filter); err != nil {
+			log.Print(logPrefix, err)
+		}
+	}
+
+	for _, sub := range client.subs {
+		if err := client.subcribeEvent(sub); err != nil {
+			log.Print(logPrefix, err)
+		}
+	}
+	log.Print(logPrefix,"Filters setup")
 }
 
 //AddFilter specifies event types to listen for.
@@ -105,40 +111,36 @@ func (client *Client) connect() (err error) {
 //filter is applied only the filtered values are received.
 //Multiple filters on a socket connection are allowed.
 func (client *Client) addFilter(arg string) (err error) {
+	client.connMu.Lock()
+	defer client.connMu.Unlock()
+
 	//Send filter command to server.
 	client.eventConn.PrintfLine("filter %s\r\n", arg)
-
-	resp, err := client.eventConn.ReadMIMEHeader()
-	if err != nil {
-		return
-	}
+	res := <-client.cmdResCh
 
 	//Check the command was processed OK.
-	if resp.Get("Content-Type") == "command/reply" &&
-		strings.HasPrefix(resp.Get("Reply-Text"), "+OK") {
+	if strings.HasPrefix(res.body, "+OK") {
 		return
 	}
 
-	return errors.New("Could not add filter")
+	return errors.New("Failed filter add '" +arg + "': " + res.body)
 }
 
 //SubcribeEvent enables events by class or all.
 func (client *Client) subcribeEvent(arg string) (err error) {
+	client.connMu.Lock()
+	defer client.connMu.Unlock()
+
 	//Send event command to server.
 	client.eventConn.PrintfLine("event plain %s\r\n", arg)
-
-	resp, err := client.eventConn.ReadMIMEHeader()
-	if err != nil {
-		return
-	}
+	res := <-client.cmdResCh
 
 	//Check the command was processed OK.
-	if resp.Get("Content-Type") == "command/reply" &&
-		strings.HasPrefix(resp.Get("Reply-Text"), "+OK") {
+	if strings.HasPrefix(res.body, "+OK") {
 		return
 	}
 
-	return errors.New("Could not subcribe to event")
+	return errors.New("Failed subcribe to event '" + arg + "': " + res.body)
 }
 
 //API sends an api command (blocking mode).
@@ -146,10 +148,9 @@ func (client *Client) API(cmd string) (string, error) {
 	client.connMu.Lock()
 	defer client.connMu.Unlock()
 	if client.eventConn == nil {
-		return "", errors.New("Not connected")
+		return "", errDisconnected
 	}
-	err := client.eventConn.PrintfLine("api %s\r\n", cmd)
-	log.Print("API res: ", err)
+	client.eventConn.PrintfLine("api %s\r\n", cmd)
 	res := <-client.cmdResCh
 	return res.body, res.err
 }
@@ -159,7 +160,7 @@ func (client *Client) Execute(app string, arg string, uuid string, lock bool) (s
 	client.connMu.Lock()
 	defer client.connMu.Unlock()
 	if client.eventConn == nil {
-		return "", errors.New("Not connected")
+		return "", errDisconnected
 	}
 
 	//Send execute command to server.
@@ -180,33 +181,30 @@ func (client *Client) Execute(app string, arg string, uuid string, lock bool) (s
 	return res.body, res.err
 }
 
-//ReadHandler receives a single message from the Freeswitch socket (blocking mode).
-func (client *Client) ReadHandler() {
+//readHandler receives messages from Freeswitch and distributes them.
+func (client *Client) readHandler() {
 ConnectLoop:
 	for {
-		log.Print("fsclient: Connecting...")
+		log.Print(logPrefix,"Connecting...")
 		//Cleanly end any waiting commands
-		select {
-		case client.cmdResCh <- cmdRes{
-			err: errors.New("Disconnected"),
-		}:
-		default:
-		}
+		client.sendCmdRes(cmdRes{err: errDisconnected}, false)
 
 		err := client.connect()
 		if err != nil {
-			log.Print("fsclient: Failed to connect: ", err)
+			log.Print(logPrefix,"Failed to connect: ", err)
 			time.Sleep(2 * time.Second)
 			continue ConnectLoop
 		}
-		log.Print("fsclient: Connected OK")
+		log.Print(logPrefix,"Connected OK")
+		go client.setupFilters()
+		go client.initFunc(client)
 
 		//Read next message off Freeswitch connection.
 	MsgLoop:
 		for {
 			resp, err := client.eventConn.ReadMIMEHeader()
 			if err != nil {
-				log.Print("fsclient: Read failure: ", err)
+				log.Print(logPrefix,"Read failure: ", err)
 				continue ConnectLoop
 			}
 
@@ -219,24 +217,38 @@ ConnectLoop:
 					continue ConnectLoop
 				}
 			} else if resp.Get("Content-Type") == "command/reply" {
-				client.cmdResCh <- cmdRes{
+				client.sendCmdRes(cmdRes{
 					body: resp.Get("Reply-Text"),
 					err:  err,
-				}
+				}, true)
 				continue MsgLoop
+			} else if resp.Get("Content-Type") == "text/disconnect-notice" {
+				log.Print(logPrefix,"Freeswitch shutting down, disconnecting")
+				continue ConnectLoop
 			} else {
-				log.Print("Unexpected message: ", resp.Get("Content-Type"))
+				log.Print(logPrefix,resp.Get("Content-Type"))
 			}
 		}
 	}
 }
 
+func (client *Client) sendCmdRes(res cmdRes, logDiscards bool) {
+		select {
+		case client.cmdResCh <- res:
+		default:
+			if logDiscards {
+				log.Print(logPrefix,"Discarded cmd result: ", res)
+			}
+		}
+}
+
+//handleEventMsg processes event messages received from Freeswitch.
 func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 	event := make(map[string]string)
 	//Check that Content-Length is numeric.
 	_, err := strconv.Atoi(resp.Get("Content-Length"))
 	if err != nil {
-		log.Print("fsclient: Invalid  Content-Length", err)
+		log.Print(logPrefix,"Invalid Content-Length", err)
 		return err
 	}
 
@@ -244,7 +256,7 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 		//Read each line of the event and store into map.
 		line, err := client.eventConn.ReadLine()
 		if err != nil {
-			log.Print("fsclient: Read failure: ", err)
+			log.Print(logPrefix,"Event Read failure: ", err)
 			return err
 		}
 
@@ -258,7 +270,7 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 		value, err := url.QueryUnescape(parts[1])
 
 		if err != nil {
-			log.Print("fsclient: Parse failure: ", err)
+			log.Print(logPrefix,"Parse failure: ", err)
 			return err
 		}
 
@@ -266,20 +278,21 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 	}
 }
 
+//handleAPIMsg processes API response messages received from Freeswitch.
 func (client *Client) handleAPIMsg(resp textproto.MIMEHeader) error {
 	//Check that Content-Length is numeric.
 	length, err := strconv.Atoi(resp.Get("Content-Length"))
 	if err != nil {
-		log.Print("fsclient: Invalid  Content-Length", err)
-		client.cmdResCh <- cmdRes{body: "", err: err}
+		log.Print(logPrefix,"Invalid Content-Length", err)
+		client.sendCmdRes(cmdRes{body: "", err: err}, true)
 		return err
 	}
 
 	//Read Content-Length bytes into a buffer and convert to string.
 	buf := make([]byte, length)
 	if _, err = io.ReadFull(client.eventConn.R, buf); err != nil {
-		log.Print("fsclient: API Read failure: ", err)
+		log.Print(logPrefix,"API Read failure: ", err)
 	}
-	client.cmdResCh <- cmdRes{body: string(buf), err: err}
+	client.sendCmdRes(cmdRes{body: string(buf), err: err}, true)
 	return err
 }
