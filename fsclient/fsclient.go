@@ -248,7 +248,8 @@ func (client *Client) sendEvent(event map[string]string) {
 	select {
 	case client.EventCh <- event:
 	default:
-		log.Print(logPrefix, "Error discarded event: ", event["Event-Name"])
+		log.Print(logPrefix, "Error discarded event: ",
+			event["Unique-ID"], " ", event["Event-Name"])
 	}
 }
 
