@@ -150,7 +150,6 @@ func (client *Client) API(cmd string) (string, error) {
 		return "", errDisconnected
 	}
 	client.eventConn.PrintfLine("api %s\r\n", cmd)
-	log.Print(logPrefix, "Waiting for response...")
 	res := <-client.cmdResCh
 	return res.body, res.err
 }
