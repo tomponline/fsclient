@@ -37,12 +37,12 @@ type cmdRes struct {
 }
 
 //NewClient creates a new Freeswitch client with filters, subscriptions and an init function.
-func NewClient(addr string, password string, filters []string, subs []string, initFunc func(*Client)) *Client {
+func NewClient(addr string, password string, filters []string, subs []string, eventBufSize int, initFunc func(*Client)) *Client {
 	fs := &Client{
 		addr:     addr,
 		password: password,
 		cmdResCh: make(chan cmdRes),
-		EventCh:  make(chan map[string]string, 100),
+		EventCh:  make(chan map[string]string, eventBufSize),
 		filters:  filters,
 		subs:     subs,
 		connMu:   &sync.Mutex{},
