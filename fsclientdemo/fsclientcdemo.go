@@ -17,13 +17,13 @@ func main() {
 	}
 
 	subs := []string{
-		"Event-Name HEARTBEAT",
-		"Event-Name CHANNEL_PARK",
-		"Event-Name CHANNEL_CREATE",
-		"Event-Name CHANNEL_ANSWER",
-		"Event-Name CHANNEL_HANGUP_COMPLETE",
-		"Event-Name CHANNEL_PROGRESS",
-		"Event-Name CHANNEL_EXECUTE",
+		"HEARTBEAT",
+		"CHANNEL_PARK",
+		"CHANNEL_CREATE",
+		"CHANNEL_ANSWER",
+		"CHANNEL_HANGUP_COMPLETE",
+		"CHANNEL_PROGRESS",
+		"CHANNEL_EXECUTE",
 	}
 
 	fs = fsclient.NewClient("127.0.0.1:8021", "ClueCon", filters, subs, 100, initFunc)
