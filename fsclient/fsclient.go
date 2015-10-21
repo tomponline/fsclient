@@ -185,7 +185,7 @@ func (client *Client) readHandler() {
 ConnectLoop:
 	for {
 		log.Print(logPrefix, "Connecting...")
-		//Cleanly end any waiting commands
+		//Cleanly end any waiting commands by pushing a disconnected error.
 		client.sendCmdRes(cmdRes{err: errDisconnected}, false)
 
 		err := client.connect()
@@ -222,8 +222,8 @@ ConnectLoop:
 				}, true)
 				continue MsgLoop
 			} else if resp.Get("Content-Type") == "text/disconnect-notice" {
-				log.Print(logPrefix, "Freeswitch shutting down, disconnecting")
-				continue ConnectLoop
+				log.Print(logPrefix, "Freeswitch shutting down...")
+				continue MsgLoop
 			} else {
 				log.Print(logPrefix, resp.Get("Content-Type"))
 			}
