@@ -27,7 +27,7 @@ type Client struct {
 	filters   []string
 	subs      []string
 	connMu    *sync.Mutex
-	initFunc func(*Client)
+	initFunc  func(*Client)
 }
 
 //cmdRes is a response structure for Freeswitch commands.
@@ -62,11 +62,11 @@ func (client *Client) connect() (err error) {
 	}
 	//Convert the raw TCP connection to a textproto connection.
 	client.connMu.Lock()
+	defer client.connMu.Unlock()
 	if client.eventConn != nil {
 		client.eventConn.Close()
 	}
 	client.eventConn = textproto.NewConn(conn)
-	client.connMu.Unlock()
 
 	//Read the welcome message.
 	resp, err := client.eventConn.ReadMIMEHeader()
@@ -82,12 +82,11 @@ func (client *Client) connect() (err error) {
 
 	//Check the command was processed OK.
 	if resp.Get("Reply-Text") == "+OK accepted" {
-			return
+		return
 	}
 
 	return errors.New("Authentication failed: " + resp.Get("Reply-Text"))
 }
-
 
 //setupFilters configures which events to receive from Freeswitch.
 func (client *Client) setupFilters() {
@@ -103,7 +102,7 @@ func (client *Client) setupFilters() {
 			log.Print(logPrefix, err)
 		}
 	}
-	log.Print(logPrefix,"Filters setup")
+	log.Print(logPrefix, "Filters setup")
 }
 
 //AddFilter specifies event types to listen for.
@@ -123,7 +122,7 @@ func (client *Client) addFilter(arg string) (err error) {
 		return
 	}
 
-	return errors.New("Failed filter add '" +arg + "': " + res.body)
+	return errors.New("Failed filter add '" + arg + "': " + res.body)
 }
 
 //SubcribeEvent enables events by class or all.
@@ -185,17 +184,17 @@ func (client *Client) Execute(app string, arg string, uuid string, lock bool) (s
 func (client *Client) readHandler() {
 ConnectLoop:
 	for {
-		log.Print(logPrefix,"Connecting...")
+		log.Print(logPrefix, "Connecting...")
 		//Cleanly end any waiting commands
 		client.sendCmdRes(cmdRes{err: errDisconnected}, false)
 
 		err := client.connect()
 		if err != nil {
-			log.Print(logPrefix,"Failed to connect: ", err)
+			log.Print(logPrefix, "Failed to connect: ", err)
 			time.Sleep(2 * time.Second)
 			continue ConnectLoop
 		}
-		log.Print(logPrefix,"Connected OK")
+		log.Print(logPrefix, "Connected OK")
 		go client.setupFilters()
 		go client.initFunc(client)
 
@@ -204,7 +203,7 @@ ConnectLoop:
 		for {
 			resp, err := client.eventConn.ReadMIMEHeader()
 			if err != nil {
-				log.Print(logPrefix,"Read failure: ", err)
+				log.Print(logPrefix, "Read failure: ", err)
 				continue ConnectLoop
 			}
 
@@ -223,23 +222,34 @@ ConnectLoop:
 				}, true)
 				continue MsgLoop
 			} else if resp.Get("Content-Type") == "text/disconnect-notice" {
-				log.Print(logPrefix,"Freeswitch shutting down, disconnecting")
+				log.Print(logPrefix, "Freeswitch shutting down, disconnecting")
 				continue ConnectLoop
 			} else {
-				log.Print(logPrefix,resp.Get("Content-Type"))
+				log.Print(logPrefix, resp.Get("Content-Type"))
 			}
 		}
 	}
 }
 
+//sendCmdRes sends a command response to the cmdResCh channel, with option as
+//to whether log discarded messages.
 func (client *Client) sendCmdRes(res cmdRes, logDiscards bool) {
-		select {
-		case client.cmdResCh <- res:
-		default:
-			if logDiscards {
-				log.Print(logPrefix,"Discarded cmd result: ", res)
-			}
+	select {
+	case client.cmdResCh <- res:
+	default:
+		if logDiscards {
+			log.Print(logPrefix, "Error discarded cmd result: ", res)
 		}
+	}
+}
+
+//sendEvent sends an event to the EventCh channel, logs discarded messages.
+func (client *Client) sendEvent(event map[string]string) {
+	select {
+	case client.EventCh <- event:
+	default:
+		log.Print(logPrefix, "Error discarded event: ", event["Event-Name"])
+	}
 }
 
 //handleEventMsg processes event messages received from Freeswitch.
@@ -248,7 +258,7 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 	//Check that Content-Length is numeric.
 	_, err := strconv.Atoi(resp.Get("Content-Length"))
 	if err != nil {
-		log.Print(logPrefix,"Invalid Content-Length", err)
+		log.Print(logPrefix, "Invalid Content-Length", err)
 		return err
 	}
 
@@ -256,12 +266,12 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 		//Read each line of the event and store into map.
 		line, err := client.eventConn.ReadLine()
 		if err != nil {
-			log.Print(logPrefix,"Event Read failure: ", err)
+			log.Print(logPrefix, "Event Read failure: ", err)
 			return err
 		}
 
 		if line == "" { //Empty line means end of event.
-			client.EventCh <- event
+			client.sendEvent(event)
 			return err
 		}
 
@@ -270,7 +280,7 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 		value, err := url.QueryUnescape(parts[1])
 
 		if err != nil {
-			log.Print(logPrefix,"Parse failure: ", err)
+			log.Print(logPrefix, "Parse failure: ", err)
 			return err
 		}
 
@@ -283,7 +293,7 @@ func (client *Client) handleAPIMsg(resp textproto.MIMEHeader) error {
 	//Check that Content-Length is numeric.
 	length, err := strconv.Atoi(resp.Get("Content-Length"))
 	if err != nil {
-		log.Print(logPrefix,"Invalid Content-Length", err)
+		log.Print(logPrefix, "Invalid Content-Length", err)
 		client.sendCmdRes(cmdRes{body: "", err: err}, true)
 		return err
 	}
@@ -291,7 +301,7 @@ func (client *Client) handleAPIMsg(resp textproto.MIMEHeader) error {
 	//Read Content-Length bytes into a buffer and convert to string.
 	buf := make([]byte, length)
 	if _, err = io.ReadFull(client.eventConn.R, buf); err != nil {
-		log.Print(logPrefix,"API Read failure: ", err)
+		log.Print(logPrefix, "API Read failure: ", err)
 	}
 	client.sendCmdRes(cmdRes{body: string(buf), err: err}, true)
 	return err

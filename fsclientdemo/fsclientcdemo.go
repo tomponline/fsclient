@@ -31,22 +31,25 @@ func main() {
 	fsEventHandler()
 }
 
-func initFunc() {
+func initFunc(fsclient *fsclient.Client) {
+	//Send any commands you want to run on first connect here.
 	fmt.Println("fsclient is now initialised")
 }
 
 func apiHostname() {
 	fmt.Println("Getting hostname...")
-	hostname, _ := fs.API("hostname")
+	hostname, err := fs.API("hostname")
+	if err != nil {
+		fmt.Println("API error: ", err)
+		return
+	}
 	fmt.Println("API response: ", hostname)
 }
 
 func apiHostnameLoop() {
 	for {
-		fmt.Println("Getting hostname...")
-		hostname, err := fs.API("hostname")
-		fmt.Println("API response: ", hostname, err)
-		time.Sleep(1 * time.Second)
+		apiHostname()
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
