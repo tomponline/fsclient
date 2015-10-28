@@ -236,7 +236,7 @@ ConnectLoop:
 func (client *Client) sendCmdRes(res cmdRes, logDiscards bool) {
 	select {
 	case client.cmdResCh <- res:
-	case <-time.After(time.Millisecond): //Wait up to 1ms to deliver to channel.
+	case <-time.After(10*time.Millisecond): //Wait up to 10ms to deliver to channel.
 		if logDiscards {
 			log.Print(logPrefix, "Error discarded API result: ", res.body)
 		}
@@ -247,7 +247,7 @@ func (client *Client) sendCmdRes(res cmdRes, logDiscards bool) {
 func (client *Client) sendEvent(event map[string]string) {
 	select {
 	case client.EventCh <- event:
-	case <-time.After(time.Millisecond): //Wait up to 1ms to deliver to channel.
+	case <-time.After(10*time.Millisecond): //Wait up to 10ms to deliver to channel.
 		log.Print(logPrefix, "Error discarded Event: ",
 			event["Unique-ID"], " ", event["Event-Name"])
 	}
