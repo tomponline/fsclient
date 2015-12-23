@@ -57,7 +57,6 @@ func fsEventHandler() {
 	for {
 		event := <-fs.EventCh
 		fmt.Print("Action: '", event["Event-Name"], "'\n")
-
 		go apiHostname()
 
 		if event["Event-Name"] == "CHANNEL_PARK" {
