@@ -41,7 +41,6 @@ func NewClient(addr string, password string, filters []string, subs []string, ev
 	fs := &Client{
 		addr:     addr,
 		password: password,
-		cmdResCh: make(chan cmdRes),
 		EventCh:  make(chan map[string]string, eventBufSize),
 		filters:  filters,
 		subs:     subs,
@@ -55,33 +54,54 @@ func NewClient(addr string, password string, filters []string, subs []string, ev
 
 //Connect establishes a connection with the local Freeswitch server.
 func (client *Client) connect() (err error) {
+
+	//If the cmd response channel has been previously initialised, this is an
+	//indication that we are reconnecting, so we need to close the channel so
+	//that any threads waiting for a response to an API request are returned
+	//and they will then release the lock on the connection so we can modify it.
+	if client.cmdResCh != nil {
+		close(client.cmdResCh)
+	}
+
+	//Now get a lock on the connection as we need to mutate connection state.
+	client.connMu.Lock()
+	defer client.connMu.Unlock()
+
+	//Make sure old connection is closed and reset to initial state.
+	//This will stop further API commands from being sent.
+	if client.eventConn != nil {
+		client.eventConn.Close()
+		client.eventConn = nil
+		client.cmdResCh = nil
+	}
+
 	//Connect to Freeswitch Event Socket.
 	conn, err := net.DialTimeout("tcp", client.addr, time.Duration(5*time.Second))
 	if err != nil {
 		return
 	}
+
 	//Convert the raw TCP connection to a textproto connection.
-	client.connMu.Lock()
-	defer client.connMu.Unlock()
-	if client.eventConn != nil {
-		client.eventConn.Close()
-	}
-	client.eventConn = textproto.NewConn(conn)
+	eventConn := textproto.NewConn(conn)
 
 	//Read the welcome message.
-	resp, err := client.eventConn.ReadMIMEHeader()
+	resp, err := eventConn.ReadMIMEHeader()
 	if err != nil {
 		return
 	}
 
 	//Send authentication request to server.
-	client.eventConn.PrintfLine("auth %s\r\n", client.password)
-	if resp, err = client.eventConn.ReadMIMEHeader(); err != nil {
+	eventConn.PrintfLine("auth %s\r\n", client.password)
+	if resp, err = eventConn.ReadMIMEHeader(); err != nil {
 		return
 	}
 
 	//Check the command was processed OK.
 	if resp.Get("Reply-Text") == "+OK accepted" {
+		//The connection is now ready to be used, make available for use
+		//and also create a new cmd response channel.
+		client.eventConn = eventConn
+		client.cmdResCh = make(chan cmdRes)
 		return
 	}
 
@@ -115,14 +135,14 @@ func (client *Client) addFilter(arg string) (err error) {
 
 	//Send filter command to server.
 	client.eventConn.PrintfLine("filter %s\r\n", arg)
-	res := <-client.cmdResCh
+	body, err := client.readCmdRes()
 
 	//Check the command was processed OK.
-	if strings.HasPrefix(res.body, "+OK") {
+	if strings.HasPrefix(body, "+OK") {
 		return
 	}
 
-	return errors.New("Failed filter add '" + arg + "': " + res.body)
+	return errors.New("Failed filter add '" + arg + "': " + body)
 }
 
 //SubcribeEvent enables events by class or all.
@@ -132,33 +152,50 @@ func (client *Client) subcribeEvent(arg string) (err error) {
 
 	//Send event command to server.
 	client.eventConn.PrintfLine("event plain %s\r\n", arg)
-	res := <-client.cmdResCh
+	body, _ := client.readCmdRes()
 
 	//Check the command was processed OK.
-	if strings.HasPrefix(res.body, "+OK") {
+	if strings.HasPrefix(body, "+OK") {
 		return
 	}
 
-	return errors.New("Failed subcribe to event '" + arg + "': " + res.body)
+	return errors.New("Failed subcribe to event '" + arg + "': " + body)
+}
+
+//readCmdRes waits until Freeswitch delivers a command response message.
+//It will block until a message arrives or until the cmdResCh channel is closed
+//indicating that we have been disconnected from the server, at which point a
+//errDisconnected response is delivered instead.
+func (client *Client) readCmdRes() (string, error) {
+	res := <-client.cmdResCh
+	if res.body == "" && res.err == nil {
+		return "", errDisconnected
+	}
+	return res.body, res.err
 }
 
 //API sends an api command (blocking mode).
 func (client *Client) API(cmd string) (string, error) {
 	client.connMu.Lock()
 	defer client.connMu.Unlock()
-	if client.eventConn == nil {
+
+	//If the command response channel is not intialised then it means we
+	//are not connected. So no point in sending a command.
+	if client.cmdResCh == nil {
 		return "", errDisconnected
 	}
 	client.eventConn.PrintfLine("api %s\r\n", cmd)
-	res := <-client.cmdResCh
-	return res.body, res.err
+	return client.readCmdRes()
 }
 
 //Execute is used to execute dialplan applications on a channel.
 func (client *Client) Execute(app string, arg string, uuid string, lock bool) (string, error) {
 	client.connMu.Lock()
 	defer client.connMu.Unlock()
-	if client.eventConn == nil {
+
+	//If the command response channel is not intialised then it means we
+	//are not connected. So no point in sending a command.
+	if client.cmdResCh == nil {
 		return "", errDisconnected
 	}
 
@@ -176,8 +213,7 @@ func (client *Client) Execute(app string, arg string, uuid string, lock bool) (s
 	}
 
 	client.eventConn.PrintfLine("") //Empty line indicates end of command.
-	res := <-client.cmdResCh
-	return res.body, res.err
+	return client.readCmdRes()
 }
 
 //readHandler receives messages from Freeswitch and distributes them.
@@ -185,9 +221,6 @@ func (client *Client) readHandler() {
 ConnectLoop:
 	for {
 		log.Print(logPrefix, "Connecting...")
-		//Cleanly end any waiting commands by pushing a disconnected error.
-		client.sendCmdRes(cmdRes{err: errDisconnected}, false)
-
 		err := client.connect()
 		if err != nil {
 			log.Print(logPrefix, "Failed to connect: ", err)
@@ -216,29 +249,17 @@ ConnectLoop:
 					continue ConnectLoop
 				}
 			} else if resp.Get("Content-Type") == "command/reply" {
-				client.sendCmdRes(cmdRes{
+				client.cmdResCh <- cmdRes{
 					body: resp.Get("Reply-Text"),
 					err:  err,
-				}, true)
+				}
 				continue MsgLoop
 			} else if resp.Get("Content-Type") == "text/disconnect-notice" {
 				log.Print(logPrefix, "Freeswitch shutting down...")
-				continue MsgLoop
+				continue MsgLoop //Get any final messages before it disconnects.
 			} else {
 				log.Print(logPrefix, resp.Get("Content-Type"))
 			}
-		}
-	}
-}
-
-//sendCmdRes sends a command response to the cmdResCh channel, with option as
-//to whether log discarded messages.
-func (client *Client) sendCmdRes(res cmdRes, logDiscards bool) {
-	select {
-	case client.cmdResCh <- res:
-	case <-time.After(10*time.Millisecond): //Wait up to 10ms to deliver to channel.
-		if logDiscards {
-			log.Print(logPrefix, "Error discarded API result: ", res.body)
 		}
 	}
 }
@@ -248,8 +269,8 @@ func (client *Client) sendEvent(event map[string]string) {
 	chanLen := len(client.EventCh)
 	select {
 	case client.EventCh <- event:
-	case <-time.After(10*time.Millisecond): //Wait up to 10ms to deliver to channel.
-		log.Print(logPrefix, "Error Event channel blocked (",chanLen,
+	case <-time.After(1 * time.Second): //Wait up to 1s to deliver to channel.
+		log.Print(logPrefix, "Error Event channel blocked (", chanLen,
 			" items), discarded Event: ", event["Unique-ID"], " ", event["Event-Name"])
 	}
 }
@@ -291,12 +312,13 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 }
 
 //handleAPIMsg processes API response messages received from Freeswitch.
+//It delivers the response to the waiting function via the cmdResCh channel.
 func (client *Client) handleAPIMsg(resp textproto.MIMEHeader) error {
 	//Check that Content-Length is numeric.
 	length, err := strconv.Atoi(resp.Get("Content-Length"))
 	if err != nil {
 		log.Print(logPrefix, "Invalid Content-Length", err)
-		client.sendCmdRes(cmdRes{body: "", err: err}, true)
+		client.cmdResCh <- cmdRes{body: "", err: err}
 		return err
 	}
 
@@ -305,6 +327,6 @@ func (client *Client) handleAPIMsg(resp textproto.MIMEHeader) error {
 	if _, err = io.ReadFull(client.eventConn.R, buf); err != nil {
 		log.Print(logPrefix, "API Read failure: ", err)
 	}
-	client.sendCmdRes(cmdRes{body: string(buf), err: err}, true)
+	client.cmdResCh <- cmdRes{body: string(buf), err: err}
 	return err
 }
