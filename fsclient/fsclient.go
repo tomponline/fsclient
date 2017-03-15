@@ -264,8 +264,8 @@ ConnectLoop:
 	}
 }
 
-//sendEvent sends an event to the EventCh channel, logs discarded messages.
-func (client *Client) sendEvent(event map[string]string) {
+//deliverEvent sends an event to the EventCh channel, logs discarded messages.
+func (client *Client) deliverEvent(event map[string]string) {
 	chanLen := len(client.EventCh)
 	select {
 	case client.EventCh <- event:
@@ -294,7 +294,7 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 		}
 
 		if line == "" { //Empty line means end of event.
-			client.sendEvent(event)
+			client.deliverEvent(event)
 			return err
 		}
 
