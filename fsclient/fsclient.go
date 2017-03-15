@@ -238,7 +238,7 @@ func (client *Client) SendEvent(eventName string, eventParams map[string]string,
 		client.eventConn.PrintfLine("") //Empty line indicates end of header.
 		client.eventConn.W.WriteString(eventBody)
 		client.eventConn.W.Flush()
-		
+
 	} else {
 		client.eventConn.PrintfLine("") //Empty line indicates end of command.
 	}
@@ -309,7 +309,7 @@ func (client *Client) deliverEvent(event map[string]string) {
 func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 	event := make(map[string]string)
 	bodyLength := 0
-	
+
 	//Check that Content-Length is numeric.
 	_, err := strconv.Atoi(resp.Get("Content-Length"))
 	if err != nil {
@@ -326,13 +326,13 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 		}
 
 		if line == "" { //Empty line means end of event headers.
-		    //If the bodyLength has been set greater than zero, then read the
-		    //body of the event into a special key called "body".
-		    if bodyLength > 0 {
-                buf := make([]byte, bodyLength)
-                client.eventConn.Reader.R.Read(buf)
-                event["body"] = string(buf)
-		    }
+			//If the bodyLength has been set greater than zero, then read the
+			//body of the event into a special key called "body".
+			if bodyLength > 0 {
+				buf := make([]byte, bodyLength)
+				client.eventConn.Reader.R.Read(buf)
+				event["body"] = string(buf)
+			}
 			client.deliverEvent(event)
 			return err
 		}
@@ -346,11 +346,11 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 			return err
 		}
 
-        //If the header key indicates there is additional content at the end
-        //of this message, then convert it to an integer for reading later.
-        if key == "Content-Length" || key == "content-length" {
-            bodyLength, _ = strconv.Atoi(value)
-        }
+		//If the header key indicates there is additional content at the end
+		//of this message, then convert it to an integer for reading later.
+		if key == "Content-Length" || key == "content-length" {
+			bodyLength, _ = strconv.Atoi(value)
+		}
 
 		event[key] = value
 	}
