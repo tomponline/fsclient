@@ -216,6 +216,36 @@ func (client *Client) Execute(app string, arg string, uuid string, lock bool) (s
 	return client.readCmdRes()
 }
 
+//SendEvent is used to send an event into the event system.
+func (client *Client) SendEvent(eventName string, eventParams map[string]string, eventBody string) (string, error) {
+	client.connMu.Lock()
+	defer client.connMu.Unlock()
+
+	//If the command response channel is not intialised then it means we
+	//are not connected. So no point in sending a command.
+	if client.cmdResCh == nil {
+		return "", errDisconnected
+	}
+
+	//Send sendevent command to server.
+	client.eventConn.PrintfLine("sendevent %s", eventName)
+	for paramKey, paramVal := range eventParams {
+		client.eventConn.PrintfLine("%s: %s", paramKey, paramVal)
+	}
+
+	if eventBody != "" {
+		client.eventConn.PrintfLine("Content-Length: %d", len(eventBody))
+		client.eventConn.PrintfLine("") //Empty line indicates end of header.
+		client.eventConn.W.WriteString(eventBody)
+		client.eventConn.W.Flush()
+		
+	} else {
+		client.eventConn.PrintfLine("") //Empty line indicates end of command.
+	}
+
+	return client.readCmdRes()
+}
+
 //readHandler receives messages from Freeswitch and distributes them.
 func (client *Client) readHandler() {
 ConnectLoop:
@@ -278,6 +308,8 @@ func (client *Client) deliverEvent(event map[string]string) {
 //handleEventMsg processes event messages received from Freeswitch.
 func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 	event := make(map[string]string)
+	bodyLength := 0
+	
 	//Check that Content-Length is numeric.
 	_, err := strconv.Atoi(resp.Get("Content-Length"))
 	if err != nil {
@@ -293,7 +325,14 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 			return err
 		}
 
-		if line == "" { //Empty line means end of event.
+		if line == "" { //Empty line means end of event headers.
+		    //If the bodyLength has been set greater than zero, then read the
+		    //body of the event into a special key called "body".
+		    if bodyLength > 0 {
+                buf := make([]byte, bodyLength)
+                client.eventConn.Reader.R.Read(buf)
+                event["body"] = string(buf)
+		    }
 			client.deliverEvent(event)
 			return err
 		}
@@ -306,6 +345,12 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 			log.Print(logPrefix, "Parse failure: ", err)
 			return err
 		}
+
+        //If the header key indicates there is additional content at the end
+        //of this message, then convert it to an integer for reading later.
+        if key == "Content-Length" || key == "content-length" {
+            bodyLength, _ = strconv.Atoi(value)
+        }
 
 		event[key] = value
 	}
