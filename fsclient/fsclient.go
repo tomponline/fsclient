@@ -190,6 +190,7 @@ func (client *Client) API(cmd string) (string, error) {
 }
 
 //BackgroundAPI sends a bgapi command (async mode).
+//You need to subscribe to BACKGROUND_JOB events to get the actual response.
 func (client *Client) BackgroundAPI(cmd string) (string, error) {
 	client.connMu.Lock()
 	defer client.connMu.Unlock()
