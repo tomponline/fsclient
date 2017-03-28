@@ -331,7 +331,7 @@ func (client *Client) handleEventMsg(resp textproto.MIMEHeader) error {
 			if bodyLength > 0 {
 				buf := make([]byte, bodyLength)
 				client.eventConn.Reader.R.Read(buf)
-				event["body"] = string(buf)
+				event["body-string"] = string(buf)
 			}
 			client.deliverEvent(event)
 			return err
