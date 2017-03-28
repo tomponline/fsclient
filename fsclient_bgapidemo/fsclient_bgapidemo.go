@@ -1,3 +1,4 @@
+//This demo tests the bgapi functionality in fsclient.
 package main
 
 import (
@@ -13,21 +14,16 @@ func main() {
 
 	filters := []string{
 		"Event-Name HEARTBEAT",
-		"variable_fsclient true",
+		"Event-Name BACKGROUND_JOB",
 	}
 
 	subs := []string{
 		"HEARTBEAT",
-		"CHANNEL_PARK",
-		"CHANNEL_CREATE",
-		"CHANNEL_ANSWER",
-		"CHANNEL_HANGUP_COMPLETE",
-		"CHANNEL_PROGRESS",
-		"CHANNEL_EXECUTE",
+		"BACKGROUND_JOB",
 	}
 
 	fs = fsclient.NewClient("127.0.0.1:8021", "ClueCon", filters, subs, 1, initFunc)
-	go apiHostnameLoop()
+	go bgapiHostnameLoop()
 	fsEventHandler()
 }
 
@@ -36,19 +32,19 @@ func initFunc(fsclient *fsclient.Client) {
 	fmt.Println("fsclient is now initialised")
 }
 
-func apiHostname() {
+func bgapiHostname() {
 	fmt.Println("Getting hostname...")
-	hostname, err := fs.API("hostname")
+	jobUUID, err := fs.BackgroundAPI("hostname")
 	if err != nil {
 		fmt.Println("API error: ", err)
 		return
 	}
-	fmt.Print("API response: ", hostname, "\n")
+	fmt.Print("BGAPI response: ", jobUUID, "\n")
 }
 
-func apiHostnameLoop() {
+func bgapiHostnameLoop() {
 	for {
-		apiHostname()
+		bgapiHostname()
 		time.Sleep(500 * time.Millisecond)
 	}
 }
@@ -57,12 +53,9 @@ func fsEventHandler() {
 	for {
 		event := <-fs.EventCh
 		fmt.Print("Action: '", event["Event-Name"], "'\n")
-		go apiHostname()
 
-		if event["Event-Name"] == "CHANNEL_PARK" {
-			fmt.Println("Got channel park")
-			fs.Execute("answer", "", event["Unique-ID"], true)
-			fs.Execute("delay_echo", "", event["Unique-ID"], true)
+		if event["Event-Name"] == "BACKGROUND_JOB" {
+			fmt.Print("Got background job result: ", event["body-string"], "\n")
 		}
 	}
 }

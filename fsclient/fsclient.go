@@ -32,8 +32,9 @@ type Client struct {
 
 //cmdRes is a response structure for Freeswitch commands.
 type cmdRes struct {
-	body string
-	err  error
+	body    string
+	jobUUID string
+	err     error
 }
 
 //NewClient creates a new Freeswitch client with filters, subscriptions and an init function.
@@ -188,6 +189,40 @@ func (client *Client) API(cmd string) (string, error) {
 	return client.readCmdRes()
 }
 
+//BackgroundAPI sends an bgapi command (async mode).
+func (client *Client) BackgroundAPI(cmd string) (string, error) {
+	client.connMu.Lock()
+	defer client.connMu.Unlock()
+
+	//If the command response channel is not intialised then it means we
+	//are not connected. So no point in sending a command.
+	if client.cmdResCh == nil {
+		return "", errDisconnected
+	}
+	client.eventConn.PrintfLine("bgapi %s\r\n", cmd)
+	return client.readBackgroundAPIRes()
+}
+
+//readBackgroundAPIRes waits until Freeswitch delivers a bgapi response message.
+//It will block until a message arrives or until the cmdResCh channel is closed
+//indicating that we have been disconnected from the server, at which point a
+//errDisconnected response is delivered instead.
+func (client *Client) readBackgroundAPIRes() (string, error) {
+	res := <-client.cmdResCh
+	if res.body == "" && res.err == nil {
+		return "", errDisconnected
+	}
+
+	//If no other error found, but response body doesn't start with "+OK",
+	//then convert the res.body to an error and return it with empty Job UUID.
+	if res.err == nil && !strings.HasPrefix(res.body, "+OK") {
+		return "", errors.New(res.body)
+	}
+
+	//Otherwise pass through the upstream response Job UUID and error (if any).
+	return res.jobUUID, res.err
+}
+
 //Execute is used to execute dialplan applications on a channel.
 func (client *Client) Execute(app string, arg string, uuid string, lock bool) (string, error) {
 	client.connMu.Lock()
@@ -280,8 +315,9 @@ ConnectLoop:
 				}
 			} else if resp.Get("Content-Type") == "command/reply" {
 				client.cmdResCh <- cmdRes{
-					body: resp.Get("Reply-Text"),
-					err:  err,
+					body:    resp.Get("Reply-Text"),
+					jobUUID: resp.Get("Job-UUID"),
+					err:     err,
 				}
 				continue MsgLoop
 			} else if resp.Get("Content-Type") == "text/disconnect-notice" {
