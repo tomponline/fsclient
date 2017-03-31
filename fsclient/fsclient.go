@@ -180,7 +180,7 @@ func (client *Client) API(cmd string) (string, error) {
 	client.connMu.Lock()
 	defer client.connMu.Unlock()
 
-	//If the command response channel is not intialised then it means we
+	//If the command response channel is not initialised then it means we
 	//are not connected. So no point in sending a command.
 	if client.cmdResCh == nil {
 		return "", errDisconnected
@@ -195,7 +195,7 @@ func (client *Client) BackgroundAPI(cmd string) (string, error) {
 	client.connMu.Lock()
 	defer client.connMu.Unlock()
 
-	//If the command response channel is not intialised then it means we
+	//If the command response channel is not initialised then it means we
 	//are not connected. So no point in sending a command.
 	if client.cmdResCh == nil {
 		return "", errDisconnected
