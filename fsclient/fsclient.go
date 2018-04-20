@@ -420,6 +420,8 @@ func (client *Client) handleAPIMsg(resp textproto.MIMEHeader) error {
 //NextEvent function blocks until there is an event recieved from Freeswitch.
 func (client *Client) NextEvent() map[string]string {
 	var event map[string]string
+	//Check there are no buffered events from earlier socket reads.
+	//If there are then deliver the earliest event from the buffer.
 	client.eventBufMu.Lock()
 	if len(client.eventBuf) > 0 {
 		event, client.eventBuf = client.eventBuf[0], client.eventBuf[1:]
@@ -427,5 +429,7 @@ func (client *Client) NextEvent() map[string]string {
 		return event
 	}
 	client.eventBufMu.Unlock()
+
+	//Otherwise block on event channel until a new event is available.
 	return <-client.eventCh
 }
