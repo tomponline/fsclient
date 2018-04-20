@@ -19,15 +19,17 @@ var logPrefix = "fsclient: "
 
 //Client represents a Freeswitch client. Contains the event socket connection.
 type Client struct {
-	eventConn *textproto.Conn
-	addr      string
-	password  string
-	cmdResCh  chan cmdRes
-	EventCh   chan map[string]string
-	filters   []string
-	subs      []string
-	connMu    *sync.Mutex
-	initFunc  func(*Client)
+	eventConn  *textproto.Conn
+	addr       string
+	password   string
+	cmdResCh   chan cmdRes
+	eventCh    chan map[string]string
+	eventBuf   []map[string]string
+	eventBufMu *sync.Mutex
+	filters    []string
+	subs       []string
+	connMu     *sync.Mutex
+	initFunc   func(*Client)
 }
 
 //cmdRes is a response structure for Freeswitch commands.
@@ -38,15 +40,17 @@ type cmdRes struct {
 }
 
 //NewClient creates a new Freeswitch client with filters, subscriptions and an init function.
-func NewClient(addr string, password string, filters []string, subs []string, eventBufSize int, initFunc func(*Client)) *Client {
+func NewClient(addr string, password string, filters []string, subs []string, initFunc func(*Client)) *Client {
 	fs := &Client{
-		addr:     addr,
-		password: password,
-		EventCh:  make(chan map[string]string, eventBufSize),
-		filters:  filters,
-		subs:     subs,
-		connMu:   &sync.Mutex{},
-		initFunc: initFunc,
+		addr:       addr,
+		password:   password,
+		eventCh:    make(chan map[string]string),
+		eventBuf:   make([]map[string]string, 0),
+		eventBufMu: &sync.Mutex{},
+		filters:    filters,
+		subs:       subs,
+		connMu:     &sync.Mutex{},
+		initFunc:   initFunc,
 	}
 
 	go fs.readHandler()
@@ -333,12 +337,12 @@ ConnectLoop:
 
 //deliverEvent sends an event to the EventCh channel, logs discarded messages.
 func (client *Client) deliverEvent(event map[string]string) {
-	chanLen := len(client.EventCh)
 	select {
-	case client.EventCh <- event:
-	case <-time.After(1 * time.Second): //Wait up to 1s to deliver to channel.
-		log.Print(logPrefix, "Error Event channel blocked (", chanLen,
-			" items), discarded Event: ", event["Unique-ID"], " ", event["Event-Name"])
+	case client.eventCh <- event:
+	default: //Buffer event to slice if can't be delivered immediately.
+		client.eventBufMu.Lock()
+		client.eventBuf = append(client.eventBuf, event)
+		client.eventBufMu.Unlock()
 	}
 }
 
@@ -411,4 +415,21 @@ func (client *Client) handleAPIMsg(resp textproto.MIMEHeader) error {
 	}
 	client.cmdResCh <- cmdRes{body: string(buf), err: err}
 	return err
+}
+
+//NextEvent function blocks until there is an event recieved from Freeswitch.
+func (client *Client) NextEvent() map[string]string {
+	//Check there are no buffered events from earlier socket reads.
+	//If there are then deliver the earliest event from the buffer.
+	client.eventBufMu.Lock()
+	if len(client.eventBuf) > 0 {
+		var event map[string]string
+		event, client.eventBuf = client.eventBuf[0], client.eventBuf[1:]
+		client.eventBufMu.Unlock()
+		return event
+	}
+	client.eventBufMu.Unlock()
+
+	//Otherwise block on event channel until a new event is available.
+	return <-client.eventCh
 }

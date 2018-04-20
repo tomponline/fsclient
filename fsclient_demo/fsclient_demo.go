@@ -26,7 +26,7 @@ func main() {
 		"CHANNEL_EXECUTE",
 	}
 
-	fs = fsclient.NewClient("127.0.0.1:8021", "ClueCon", filters, subs, 1, initFunc)
+	fs = fsclient.NewClient("127.0.0.1:8021", "ClueCon", filters, subs, initFunc)
 	go apiHostnameLoop()
 	fsEventHandler()
 }
@@ -43,7 +43,17 @@ func apiHostname() {
 		fmt.Println("API error: ", err)
 		return
 	}
-	fmt.Print("API response: ", hostname, "\n")
+	fmt.Print("Hostname API response: ", hostname, "\n")
+}
+
+func apiSleep() {
+	fmt.Println("Sending sleep command for 30s...")
+	hostname, err := fs.API("msleep 30000")
+	if err != nil {
+		fmt.Println("API error: ", err)
+		return
+	}
+	fmt.Print("Sleep API response: ", hostname, "\n")
 }
 
 func apiHostnameLoop() {
@@ -53,11 +63,20 @@ func apiHostnameLoop() {
 	}
 }
 
-func fsEventHandler() {
+func apiSomeSleep() {
 	for {
-		event := <-fs.EventCh
+		apiSleep()
+		time.Sleep(60 * time.Second)
+	}
+}
+
+func fsEventHandler() {
+	go apiHostname()
+	go apiSomeSleep()
+
+	for {
+		event := fs.NextEvent()
 		fmt.Print("Action: '", event["Event-Name"], "'\n")
-		go apiHostname()
 
 		if event["Event-Name"] == "CHANNEL_PARK" {
 			fmt.Println("Got channel park")
