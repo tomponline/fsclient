@@ -417,7 +417,7 @@ func (client *Client) handleAPIMsg(resp textproto.MIMEHeader) error {
 	return err
 }
 
-//NextEvent function blocks until there is an event recieved from Freeswitch.
+//NextEvent function blocks until there is an event received from Freeswitch.
 func (client *Client) NextEvent() map[string]string {
 	//Check there are no buffered events from earlier socket reads.
 	//If there are then deliver the earliest event from the buffer.
@@ -432,4 +432,11 @@ func (client *Client) NextEvent() map[string]string {
 
 	//Otherwise block on event channel until a new event is available.
 	return <-client.eventCh
+}
+
+//SendInternalEvent function sends an event of type map[string]string into the
+//event channel.
+func (client *Client) SendInternalEvent(event map[string]string) {
+	// Use the method that already exist.
+	client.deliverEvent(event)
 }
